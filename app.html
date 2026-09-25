@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GoBag - kit check</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; background:#1a120e; color:#f5ece4; min-height:100vh; }
+  .wrap { max-width:780px; margin:0 auto; padding:28px 20px 80px; }
+  header { display:flex; justify-content:space-between; align-items:center; margin-bottom:22px; }
+  header h1 { font-size:22px; } header h1 span { color:#ff9d5c; }
+  header a { color:#a89080; text-decoration:none; font-size:14px; }
+  .card { background:#261a13; border:1px solid #45301f; border-radius:12px; padding:18px; margin-bottom:18px; }
+  label { font-size:12px; color:#a89080; display:block; margin-bottom:4px; }
+  input, select { background:#1a120e; border:1px solid #5c3f28; border-radius:8px; color:#f5ece4; padding:8px 10px; font-size:14px; width:100%; }
+  button { background:#ff9d5c; border:none; color:#241108; font-weight:700; padding:10px 20px; border-radius:9px; font-size:14px; cursor:pointer; }
+  button:hover { filter:brightness(1.1); }
+  .row3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; align-items:end; }
+  .big { font-size:44px; font-weight:800; color:#ff9d5c; }
+  .ring { display:flex; align-items:center; gap:22px; }
+  .ring .meta { color:#a89080; font-size:13px; line-height:1.6; }
+  .cat { font-size:13px; color:#a89080; text-transform:uppercase; letter-spacing:1px; margin:14px 0 4px; }
+  .item { display:grid; grid-template-columns:1fr 90px 110px 100px; gap:10px; align-items:center; padding:9px 0; border-bottom:1px solid #332217; font-size:14px; }
+  .item:last-child { border-bottom:none; }
+  .item .need { color:#a89080; font-size:12px; }
+  .item input { padding:6px 8px; font-size:13px; }
+  .st { font-size:12px; font-weight:700; text-align:right; }
+  .st.ok { color:#7ee2a0; } .st.low { color:#ffc857; } .st.missing { color:#ff6b6b; } .st.expiring, .st.expired { color:#ff9d5c; }
+  .alerts { background:#33200f; border:1px solid #6b4420; color:#ffd9a8; padding:12px 14px; border-radius:10px; margin-bottom:14px; font-size:14px; line-height:1.6; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header><h1>Go<span>Bag</span></h1><a href="index.html">home</a></header>
+
+  <div class="card">
+    <div class="row3">
+      <div><label>People in household</label><input id="people" type="number" min="1" value="2"></div>
+      <div><label>Pets</label><input id="pets" type="number" min="0" value="0"></div>
+      <div><label>&nbsp;</label><button id="apply" style="width:100%">Apply</button></div>
+    </div>
+  </div>
+
+  <div id="score"></div>
+  <div id="alerts"></div>
+  <div id="list"></div>
+</div>
+<script src="engine.js"></script>
+<script>
+(function(){
+  const $ = id => document.getElementById(id);
+  const today = GoBagEngine.parseDay(new Date().toISOString().slice(0,10));
+  let state = { people: 2, pets: 0, have: {}, bought: {} };
+  try {
+    const s = JSON.parse(localStorage.getItem('gobag-state') || 'null');
+    if (s && s.have) state = s;
+  } catch(e) {}
+  function save(){ localStorage.setItem('gobag-state', JSON.stringify(state)); }
+  function esc(s){ return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+  $('people').value = state.people;
+  $('pets').value = state.pets;
+  $('apply').onclick = () => {
+    try {
+      const hh = GoBagEngine.normHousehold({ people: $('people').value, pets: $('pets').value });
+      state.people = hh.people; state.pets = hh.pets; save(); render();
+    } catch(e) { alert(e.message); }
+  };
+
+  function render(){
+    const hh = GoBagEngine.normHousehold({ people: state.people, pets: state.pets });
+    const entries = GoBagEngine.ITEMS
+      .map(it => {
+        const need = GoBagEngine.needFor(it, hh);
+        return { id: it.id, name: it.name, unit: it.unit, cat: it.cat, need: need,
+          haveQty: state.have[it.id] || 0,
+          purchaseDayNum: state.bought[it.id] ? GoBagEngine.parseDay(state.bought[it.id]) : null,
+          expiryDays: it.expiryDays };
+      })
+      .filter(e => e.need > 0 || e.haveQty > 0);
+    const rep = GoBagEngine.report(entries, today);
+    const pct = Math.round(rep.readiness * 100);
+
+    $('score').innerHTML = '<div class="card"><div class="ring"><div class="big">' + pct + '%</div>'
+      + '<div class="meta"><b>72-hour readiness</b><br>' + rep.okCount + ' of ' + rep.rows.length + ' items fully stocked - '
+      + rep.missing.length + ' missing - ' + rep.low.length + ' low - ' + rep.expiring.length + ' expiring</div></div></div>';
+
+    const notes = [];
+    if (rep.missing.length) notes.push('<b>Missing:</b> ' + rep.missing.map(r => esc(r.name)).join(', '));
+    if (rep.expiring.length) notes.push('<b>Expiry attention:</b> ' + rep.expiring.map(r => esc(r.name) + (r.state === 'expired' ? ' (expired)' : ' (' + r.daysLeft + 'd left)')).join(', '));
+    $('alerts').innerHTML = notes.length ? '<div class="alerts">' + notes.join('<br>') + '</div>' : '';
+
+    const cats = [];
+    rep.rows.forEach(r => { if (cats.indexOf(r.cat) === -1) cats.push(r.cat); });
+    $('list').innerHTML = '<div class="card">' + cats.map(c => {
+      const rows = rep.rows.filter(r => r.cat === c).map(r => {
+        const entry = entries.find(e => e.name === r.name);
+        const stText = r.state === 'ok' ? 'stocked'
+          : r.state === 'low' ? 'low (' + r.haveQty + '/' + r.need + ')'
+          : r.state === 'missing' ? 'missing'
+          : r.state === 'expired' ? 'EXPIRED'
+          : 'expires in ' + r.daysLeft + 'd';
+        return '<div class="item"><div><b>' + esc(r.name) + '</b> <span class="need">need ' + r.need + ' ' + esc(r.unit) + '</span></div>'
+          + '<div><input type="number" min="0" step="any" data-have="' + entry.id + '" value="' + (r.haveQty || '') + '" placeholder="have"></div>'
+          + '<div>' + (entry.expiryDays ? '<input type="date" data-bought="' + entry.id + '" value="' + (state.bought[entry.id] || '') + '">' : '<span class="need">no expiry</span>') + '</div>'
+          + '<div class="st ' + r.state + '">' + stText + '</div></div>';
+      }).join('');
+      return '<div class="cat">' + esc(c) + '</div>' + rows;
+    }).join('') + '</div>';
+
+    document.querySelectorAll('[data-have]').forEach(el => el.onchange = () => {
+      state.have[el.dataset.have] = Number(el.value) || 0; save(); render();
+    });
+    document.querySelectorAll('[data-bought]').forEach(el => el.onchange = () => {
+      if (el.value) state.bought[el.dataset.bought] = el.value; else delete state.bought[el.dataset.bought];
+      save(); render();
+    });
+  }
+
+  render();
+})();
+</script>
+</body>
+</html>
